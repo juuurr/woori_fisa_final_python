@@ -8,7 +8,13 @@ import pymysql
 import requests
 from openai import OpenAI
 from fastapi.responses import FileResponse
-from sqlalchemy import inspect
+from sqlalchemy import create_engine, MetaData, Table, inspect
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql import text
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 
 # .env 파일 로드
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +29,9 @@ db_host = os.getenv('DB_HOST')
 db_port = os.getenv('DB_PORT')
 
 engine = create_engine(f'mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/aiteam2')
+
+# 템플릿 설정
+templates = Jinja2Templates(directory="templates")
 
 def category(name):
     info_query = f"SELECT agegroup, gender FROM member where username = '{name}' LIMIT 1;"
@@ -109,17 +118,100 @@ app = FastAPI()
 class NameRequest(BaseModel):
     name: str
 
+
+
+import base64
 @app.post("/receive-name")
 def receive_name(request: NameRequest):
+    import base64  # Base64 인코딩 라이브러리
+
     name = request.name
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    
+    # 데이터베이스에서 해당 사용자의 prompt와 image 확인
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    member_table = Table("member", metadata, autoload_with=engine)
+
+    # 데이터베이스 쿼리 실행
+    query = f"SELECT prompt, image FROM member WHERE username = '{name}' LIMIT 1;"
+    user_data = pd.read_sql(query, engine)
+    print(user_data)
+
+    if not user_data.empty:
+        prompt = user_data.iloc[0]["prompt"]
+        image = user_data.iloc[0]["image"]
+
+        if prompt and image:
+            # Base64로 인코딩하여 반환
+            image_base64 = base64.b64encode(image).decode("utf-8")
+            return {"prompt": prompt, "image": image_base64}
+
+    # 데이터가 없으면 새로운 데이터 생성
     category_result = category(name)
-    
-    
     prompt = gen_prompt(category_result)
     image_url = gen_image(prompt)
 
-    print(category_result, prompt, image_url)
+    print(prompt, image_url)
 
+    # 이미지 다운로드
+    image_response = requests.get(image_url)
+    if image_response.status_code == 200:
+        image_data = image_response.content
+    else:
+        raise HTTPException(status_code=500, detail="Image download failed")
+
+    # 새로 생성된 데이터를 데이터베이스에 저장
+    try:
+        with engine.connect() as conn:
+            trans = conn.begin()
+            update_query = text("""
+                UPDATE member
+                SET prompt = :prompt, image = :image
+                WHERE username = :username
+            """)
+            conn.execute(
+                update_query,
+                {"prompt": prompt, "image": image_data, "username": name}
+            )
+            trans.commit()
+            print("Data successfully saved in the database.")
+    except Exception as e:
+        print(f"Error while saving data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save data to the database")
+
+    # 저장된 데이터를 Base64로 인코딩하여 반환
+    image_base64 = base64.b64encode(image_data).decode("utf-8")
+    return {"prompt": prompt, "image": image_base64}
+
+
+
+
+@app.get("/", response_class=HTMLResponse)
+def show_index(request: Request, name: str = None):
     if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    return {"prompt": prompt, "image_url": image_url}
+        # 기본적으로 데이터를 보여주지 않음
+        return templates.TemplateResponse("index.html", {"request": request, "prompt": None, "image": None})
+
+    # 데이터베이스에서 데이터 조회
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    member_table = Table("member", metadata, autoload_with=engine)
+
+    query = text("SELECT prompt, image FROM member WHERE username = :username")
+    with engine.connect() as conn:
+        result = conn.execute(query, {"username": name}).fetchone()
+
+    # 데이터가 없으면 에러 메시지 반환
+    if not result:
+        return templates.TemplateResponse("index.html", {"request": request, "prompt": None, "image": None, "error": "No data found for this user."})
+
+    prompt = result["prompt"]
+    image_data = result["image"]
+
+    # Base64로 이미지 인코딩
+    image_base64 = base64.b64encode(image_data).decode("utf-8")
+
+    # HTML 렌더링 시 데이터 전달
+    return templates.TemplateResponse("index.html", {"request": request, "prompt": prompt, "image": image_base64})
