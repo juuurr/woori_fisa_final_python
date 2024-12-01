@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
 import pandas as pd
