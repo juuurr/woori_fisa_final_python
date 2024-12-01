@@ -16,12 +16,14 @@ db_port = os.getenv('DB_PORT')
 engine = create_engine(f'mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/aiteam2')
 
 # CSV 파일 경로
-file_path = 'card.csv'
+csv_path = '20f_data.csv'
 
 def load_and_insert_to_db(csv_path, table_name, engine):
     # CSV 파일 읽기
     df = pd.read_csv(csv_path, header=0)
-    df = df.drop(columns=['idx'])
+
+    if 'idx' in list(df.columns):
+        df = df.drop(columns=['idx'])
     
     # 데이터베이스에 데이터 삽입
     try:
@@ -31,4 +33,4 @@ def load_and_insert_to_db(csv_path, table_name, engine):
         print(f"An error occurred while inserting into {table_name}: {e}")
 
 # card 테이블로 데이터 삽입
-load_and_insert_to_db(file_path, 'card', engine)
+load_and_insert_to_db(csv_path, 'payment', engine)
