@@ -88,8 +88,8 @@ def gen_prompt(category, character):
             },
             {
                 "role": "user",
-                "content": f"Create a witty sentence for a user who primarily spends in the category of {category}, \
-                using animals and emojis. The animal must be: {character}. If the sentence spans more than one line, please add a line break (\\n) between sentences."
+                "content": f"Create a witty sentence that sums up last month's expense tendency for a user who primarily spends in the category of {category}, \
+                using baby animals and emojis. The animal must be: Baby{character}."
 
             }
         ],
@@ -100,17 +100,19 @@ def gen_prompt(category, character):
     prompt = RESPONSE.choices[0].message.content
     return prompt
 
-def gen_image(prompt):
-    prompt_input = f"Create an illustration based on the sentence: {prompt} in a 2D Disney-like style."
+def gen_image(prompt, category, character):
+    prompt_input = f"Create a mascot-like illustration based on {prompt}. A fluffy, adorable, small baby {character} with a loving and cheerful expression, sitting in the center of the image. The baby {character} exudes warmth and coziness, with a design reminiscent of a wholesome Disney movie. The baby {character} is holding objects associated with the {category}, that can easily represent {category}. The illustration is bright and sunny, with soft, clean lighting. The background is a solid, clean one color in hex code #A0DAE3, keeping the focus entirely on the cute baby {character}. The composition is 1:1, with the baby {character} taking up the majority of the frame, evoking a cozy and heartwarming atmosphere."
+    
     image_response = client.images.generate(
         model="dall-e-3",
         prompt=prompt_input,
         size="1024x1024",
-        quality="hd",
+        quality="standard",
         n=1,
     )
     image_url = image_response.data[0].url
     return image_url
+
 
 app = FastAPI()
 
@@ -138,10 +140,10 @@ async def process_user_data(data: UserData):
         character = data.character
 
         user_category = category(user_id)
-        prompt = gen_prompt(user_category, character)
-        img_url = gen_image(prompt)
+        generated_prompt = gen_prompt(user_category, character)
+        img_url = gen_image(generated_prompt, user_category, character)
 
-        print(prompt, img_url)
+        print(generated_prompt, img_url)
 
         print("Requesting image...")
         image_response = requests.get(img_url)
@@ -163,7 +165,7 @@ async def process_user_data(data: UserData):
                 """)
                 conn.execute(
                     update_query,
-                    {"prompt": prompt, "image": image_data, "user_id": user_id}
+                    {"prompt": generated_prompt, "image": image_data, "user_id": user_id}
                 )
                 print("Data successfully saved in the database.")
         except Exception as e:
