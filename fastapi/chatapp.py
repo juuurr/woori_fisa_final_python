@@ -12,7 +12,7 @@ import time
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import openai
+import openai as openai_lib
 from openai import OpenAI
 
 # .env 파일 로드
@@ -94,7 +94,7 @@ def store_data_in_chroma(embedding_data):
 def generate_answer_from_openai(question, context):
     prompt = f"다음 내용과 관련된 질문에 대해 답변을 해주세요.:\n{context}\n\n질문: {question}"
 
-    response = openai.chat.completions.create(
+    response = openai_lib.chat.completions.create(
         model="gpt-4",  # 사용할 모델
         messages = [
             {"role": "system", "content": "You are a card company employee. Based on the customer's request, provide a simple list of the best cards with the requested benefits in Korean."},
