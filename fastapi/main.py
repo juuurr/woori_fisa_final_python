@@ -16,15 +16,13 @@ import pandas as pd
 import pickle
 import time
 import requests
-import base64
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count
 import openai as openai_lib
 from openai import OpenAI
 
 # .env 파일 로드
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../.env')
-load_dotenv(dotenv_path)
+load_dotenv()
+
 
 # 환경 변수
 api_key = os.getenv("OPENAI_API_KEY")
@@ -133,7 +131,6 @@ class UserData(BaseModel):
 
 @app.post("/api/process-user-data")
 async def process_user_data(data: UserData):
-    import base64
     try:
         # 데이터 출력 (또는 필요한 로직 처리)
         print(f"Received userId: {data.userId}, character: {data.character}")
@@ -240,13 +237,22 @@ def store_data_in_chroma(embedding_data):
 
     print("Adding texts to Chroma DB...")
     start_time = time.time()  # 시작 시간 기록
-    chroma_db.add_texts(texts, metadatas)
+    batch_size = 166  # Chroma에서 허용하는 최대 배치 크기
+    for i in range(0, len(texts), batch_size):
+        # 텍스트와 메타데이터를 배치 크기만큼 나눔
+        batch_texts = texts[i:i + batch_size]
+        batch_metadatas = metadatas[i:i + batch_size]
+        
+        # Chroma에 배치 추가
+        chroma_db.add_texts(batch_texts, batch_metadatas)
     elapsed_time = time.time() - start_time  # 처리 시간 계산
     print(f"Chroma DB updated in {elapsed_time:.2f} seconds.")
     return chroma_db
 
 
+
 def generate_answer_from_openai(message, context):
+    
     prompt = f"다음 내용과 관련된 질문에 대해 답변을 해주세요.:\n{context}\n\n질문: {message}"
 
     response = openai_lib.chat.completions.create(
@@ -255,7 +261,7 @@ def generate_answer_from_openai(message, context):
             {"role": "system", "content": "You are a card company employee. Based on the customer's request, provide a simple list of the best cards with the requested benefits in Korean."},
             {"role": "user", "content": prompt}
             ],
-        max_tokens=200,
+        max_tokens=500,
         temperature=0.7
     )
     response_dict = response.model_dump()
@@ -267,10 +273,12 @@ card_data = fetch_data_from_mysql()
 embedding_card_data = precompute_card_embeddings(card_data)
 card_chroma = store_data_in_chroma(embedding_card_data)
 
-
+required_keywords = ["편의점", "마트", "카페", "외식", "주유", "쇼핑", "병원", 
+                         "교육", "통신", "자동차", "여행", "교통"]
 
 class UserRequest(BaseModel):
     question: str
+
 
 
 @app.post("/cardchat")
@@ -279,19 +287,32 @@ def chat(request: UserRequest):
         question = request.question.strip()
         if not question:
             raise HTTPException(status_code=400, detail="Question cannot be empty.")
+        
+        # 사용자 질문에 필수 키워드가 포함되었는지 확인
+        if not any(keyword in question for keyword in required_keywords):
+            raise HTTPException(status_code=400, detail="편의점, 마트, 카페, 외식, 주유, 쇼핑, 병원, 교육, 통신, 자동차, 여행, 교통 중 원하는 혜택을 검색해주세요.")
+
 
         # Retrieve relevant information from Chroma DB
-        search_results = card_chroma.similarity_search(question, k=5)
         
+        search_results = card_chroma.similarity_search(question, k=5)
+
         # Log the search results to debug
         print(f"Search Results: {search_results}")
-        
+
         if not search_results:
             raise HTTPException(status_code=404, detail="No relevant information found.")
         
+        # 혜택이 "없음"이 아닌 카드만 필터링
+        filtered_results = [
+            result for result in search_results
+            if any(result.metadata.get(benefit, '없음') != '없음' for benefit in required_keywords)
+        ]
+
+
         # Access text using the correct attribute, e.g., 'content' or 'page_content'
         combined_text = "\n".join([result.page_content for result in search_results])  # Assuming 'page_content'
-        
+
         # Log the combined text to verify
         print(f"Combined Text: {combined_text}")
 
@@ -305,8 +326,8 @@ def chat(request: UserRequest):
         if response_text:
             return {
                 "response": response_text,
-                "cards": card_names[:5],  # 카드 이름 5개만 반환
-                "img_urls": img_urls[:5]  # 이미지 URL 5개만 반환
+                "cards": card_names[:3],  # 카드 이름 3개만 반환
+                "img_urls": img_urls[:3]  # 이미지 URL 3개만 반환
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to generate response.")
