@@ -1,3 +1,4 @@
 .env
 .DS_store
 fisaenv
+embedding_cache.pkl
